@@ -32,7 +32,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-13          # Intel x86_64 (the builder binaries are x86_64).
+    runs-on: macos-15-intel          # Intel x86_64 (the builder binaries are x86_64).
                                # If unavailable, use macos-latest + install Rosetta.
     strategy:
       fail-fast: false
