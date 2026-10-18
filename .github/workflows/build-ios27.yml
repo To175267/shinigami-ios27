@@ -35,6 +35,10 @@ on:
         description: "iOS version (e.g. 27.0.1, 26.6, 18.3)"
         required: true
         default: "27.0.1"
+      kpf_set:
+        description: "Kernel patch set: auto (recommended) | ios27 | ios18"
+        required: false
+        default: "auto"
 
 jobs:
   build:
@@ -99,10 +103,17 @@ jobs:
           # shells out to, runs on a bash that understands `declare -A`.
           export PATH="/usr/local/bin:$PATH"
           echo "bash in use: $(bash --version | head -1)"
-          # No --kpf-set: the builder auto-detects it (iOS >= 27 or TXM -> ios27,
-          # iOS >= 17 -> ios18), which is what iOS 26.x needs. Hardcoding ios27 broke
-          # 26.x builds.
-          bash ./build4.sh --product ${{ matrix.device }} --version ${{ inputs.version }} --with-fw
+          # kpf_set=auto lets the builder decide (iOS >= 27 or TXM -> ios27, iOS >= 17
+          # -> ios18). Override it from the dispatch form when testing: the auto choice
+          # patches iOS 26.x with the ios18 set, which panics on some 26.6 devices.
+          KPF_ARG=""
+          if [ "${{ inputs.kpf_set }}" != "auto" ]; then
+            KPF_ARG="--kpf-set ${{ inputs.kpf_set }}"
+            echo "kpf-set overridden: ${{ inputs.kpf_set }}"
+          else
+            echo "kpf-set: auto (builder decides)"
+          fi
+          bash ./build4.sh --product ${{ matrix.device }} --version ${{ inputs.version }} $KPF_ARG --with-fw
 
       - name: iBoot version (for iboot_mapping.json)
         if: always()
