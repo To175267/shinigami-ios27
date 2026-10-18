@@ -26,13 +26,13 @@
 #   3) The upstream repo ships resources/ssh.tar.gz but not the sshtarlist.txt
 #      that setup.sh demands -> derive it from the tarball.
 
-name: Build iOS 27 Ramdisks
+name: Build iOS Ramdisks
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "iOS version (e.g. 27.0.1)"
+        description: "iOS version (e.g. 27.0.1, 26.6, 18.3)"
         required: true
         default: "27.0.1"
 
@@ -99,7 +99,31 @@ jobs:
           # shells out to, runs on a bash that understands `declare -A`.
           export PATH="/usr/local/bin:$PATH"
           echo "bash in use: $(bash --version | head -1)"
-          bash ./build4.sh --product ${{ matrix.device }} --version ${{ inputs.version }} --kpf-set ios27 --with-fw
+          # No --kpf-set: the builder auto-detects it (iOS >= 27 or TXM -> ios27,
+          # iOS >= 17 -> ios18), which is what iOS 26.x needs. Hardcoding ios27 broke
+          # 26.x builds.
+          bash ./build4.sh --product ${{ matrix.device }} --version ${{ inputs.version }} --with-fw
+
+      - name: iBoot version (for iboot_mapping.json)
+        if: always()
+        run: |
+          echo "== iBoot version (para iboot_mapping.json) =="
+          # The server resolves the iOS version from the SRTG (iBoot version string)
+          # the client reports in DFU, so every release needs an entry in
+          # iboot_mapping.json. This step surfaces that string for the build.
+          for f in builder/bootchain/*/iBoot.patched.bin builder/bootchain/*/iBEC.img4; do
+            [ -f "$f" ] || continue
+            echo "$f:"
+            strings -a "$f" 2>/dev/null | grep -oE '(iBoot|mBoot)-[0-9][0-9.]*' | sort -u | head -5 | sed 's/^/    /'
+          done
+          # BuildManifest, if pzb left one behind
+          BM=$(find builder -name 'BuildManifest.plist' 2>/dev/null | head -1)
+          if [ -n "$BM" ]; then
+            echo "BuildManifest: $BM"
+            /usr/libexec/PlistBuddy -c "Print :BuildIdentities:0:Info:BuildString" "$BM" 2>/dev/null | sed 's/^/    BuildString: /' || true
+          else
+            echo "  (no BuildManifest.plist left by pzb)"
+          fi
 
       - name: Summary (what was produced)
         if: always()
@@ -119,4 +143,3 @@ jobs:
           path: builder/bootchain/
           if-no-files-found: error
           retention-days: 14
-
