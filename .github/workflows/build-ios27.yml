@@ -54,7 +54,13 @@ jobs:
         run: git clone --depth 1 https://github.com/Rust505/iOS-ramdisk-builder-A12-A13.git builder
 
       - name: Permissions
-        run: chmod +x builder/*.sh builder/scripts/*.sh
+        run: |
+          chmod +x builder/*.sh builder/scripts/*.sh
+          # The upstream repo committed EVERY vendored binary with mode 100644 (no
+          # exec bit), so the `[[ -x "$IRECOVERY" ]]` style checks inside the scripts
+          # abort with "missing: .../tools/darwin/irecovery". Note setup.sh only tests
+          # `-e` (exists), which is why it reported them as OK.
+          chmod +x builder/tools/darwin/* builder/bin/* 2>/dev/null || true
 
       - name: Setup (bash4 + ipsw + pyimg4/capstone)
         env:
