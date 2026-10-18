@@ -1,0 +1,80 @@
+# .github/workflows/build-ios27.yml
+#
+# Builds iOS 27 SSH ramdisks for the A13 Bionic generation WITHOUT a Mac,
+# using a GitHub Actions macOS runner.
+# Based on Rust505/iOS-ramdisk-builder-A12-A13.
+#
+# A13 Bionic = iPhone 11 (iPhone12,1) | 11 Pro (iPhone12,3) | 11 Pro Max (iPhone12,5) | SE2 (iPhone12,8)
+# A12 (XR/XS/XS Max) has NO iOS 27 - Apple did not release it for that chip.
+#
+# Usage:
+#   1) This file lives at  .github/workflows/build-ios27.yml  in the repo
+#   2) GitHub -> "Actions" tab -> "Build iOS 27 Ramdisks" -> "Run workflow"
+#   3) Pick the version (default 27.0.1) and run. Download the artifact when done.
+#
+# Notes:
+#   - The BUILD does not need the iPhone: it downloads the IPSW and patches it.
+#     The device is only used to BOOT the ramdisk (boot.sh, local, with Pwned DFU).
+#   - macOS runners: free on PUBLIC repos. On private ones they consume minutes x10.
+#   - tools/darwin binaries are x86_64 -> an Intel runner is preferred.
+#     If "macos-13" no longer exists, switch runs-on to "macos-latest" and add:
+#       softwareupdate --install-rosetta --agree-to-license
+
+name: Build iOS 27 Ramdisks
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "iOS version (e.g. 27.0.1)"
+        required: true
+        default: "27.0.1"
+
+jobs:
+  build:
+    runs-on: macos-13          # Intel x86_64 (the builder binaries are x86_64).
+                               # If unavailable, use macos-latest + install Rosetta.
+    strategy:
+      fail-fast: false
+      matrix:
+        # A13 devices with iOS 27 (remove the ones you do not want)
+        device: ["iPhone12,1", "iPhone12,3", "iPhone12,5", "iPhone12,8"]
+    name: build ${{ matrix.device }} iOS ${{ inputs.version }}
+    steps:
+      - name: Disk space (before)
+        run: df -h /
+
+      - name: Clone the builder
+        run: git clone --depth 1 https://github.com/Rust505/iOS-ramdisk-builder-A12-A13.git builder
+
+      - name: Permissions
+        run: chmod +x builder/*.sh builder/scripts/*.sh
+
+      - name: Setup (brew ipsw + pip pyimg4/capstone)
+        run: |
+          cd builder
+          ./setup.sh
+
+      - name: Build bootchain
+        run: |
+          cd builder
+          ./build4.sh --product ${{ matrix.device }} --version ${{ inputs.version }} --kpf-set ios27 --with-fw
+
+      - name: Summary (what was produced)
+        if: always()
+        run: |
+          echo "== bootchain =="
+          find builder/bootchain -maxdepth 3 -type f 2>/dev/null | head -50 || true
+          du -sh builder/bootchain 2>/dev/null || true
+
+      - name: Disk space (after)
+        if: always()
+        run: df -h /
+
+      - name: Upload artifact (bootchain)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootchain-${{ matrix.device }}-${{ inputs.version }}
+          path: builder/bootchain/
+          if-no-files-found: error
+          retention-days: 14
