@@ -16,11 +16,15 @@
 #   - The BUILD does not need the iPhone: it downloads the IPSW and patches it.
 #     The device is only used to BOOT the ramdisk (boot.sh, local, with Pwned DFU).
 #   - macOS runners: free on PUBLIC repos. On private ones they consume minutes x10.
-#   - tools/darwin binaries are x86_64 -> an Intel runner is required.
-#     macos-13 was RETIRED on 2025-12-04: jobs requesting it stay QUEUED FOREVER
-#     (no failure email). macos-15-intel is the official x86_64 replacement
-#     (supported until ~Aug 2027). If that ever disappears too, switch to
-#     macos-latest and add:  softwareupdate --install-rosetta --agree-to-license
+#   - macos-13 was RETIRED on 2025-12-04: jobs requesting it stay QUEUED FOREVER
+#     (no failure email). macos-15-intel is the official x86_64 replacement.
+#
+# Runner quirks this workflow works around:
+#   1) build4.sh uses `declare -A` (bash 4+), but macOS ships /bin/bash 3.2 ->
+#      install a modern bash and put it first on PATH.
+#   2) Homebrew 6 refuses formulas/casks from an untrusted tap -> `brew trust`.
+#   3) The upstream repo ships resources/ssh.tar.gz but not the sshtarlist.txt
+#      that setup.sh demands -> derive it from the tarball.
 
 name: Build iOS 27 Ramdisks
 
@@ -52,46 +56,44 @@ jobs:
       - name: Permissions
         run: chmod +x builder/*.sh builder/scripts/*.sh
 
-      - name: Setup (brew ipsw + pip pyimg4/capstone)
-        # Two upstream quirks are worked around here:
-        #  - PEP 668: the runner's python3 is "externally managed", so setup.sh's plain
-        #    "pip install -r requirements.txt" would be REFUSED (it actually succeeds
-        #    under PIP_BREAK_SYSTEM_PACKAGES).
-        #  - the blacktop tap must be added explicitly, otherwise a non-interactive
-        #    `brew install blacktop/tap/ipsw` bails out with "Would install 1 formula".
-        #  - the upstream repo ships resources/ssh.tar.gz but NOT the sshtarlist.txt
-        #    that setup.sh demands, so we derive it from the tarball.
-        # setup.sh is allowed to report MISS items without failing the job: every tool
-        # the build actually needs (pzb/gtar/img4/trustcache, pyimg4, capstone) is
-        # already verified by the step below, and a hard failure here would mask it.
+      - name: Setup (bash4 + ipsw + pyimg4/capstone)
         env:
           PIP_BREAK_SYSTEM_PACKAGES: "1"
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: |
           cd builder
+          # (2) Homebrew 6 will not load blacktop/tap without an explicit trust.
+          brew trust blacktop/tap || true
           brew tap blacktop/tap || true
-          brew install blacktop/tap/ipsw || brew install ipsw || true
+          brew install blacktop/tap/ipsw || true
+          # (1) macOS /bin/bash is 3.2 and build4.sh needs `declare -A` (bash 4+).
+          brew install bash || true
+          # (3) setup.sh requires sshtarlist.txt which the repo does not ship.
           if [ ! -f resources/sshtarlist.txt ] && [ -f resources/ssh.tar.gz ]; then
             tar -tzf resources/ssh.tar.gz > resources/sshtarlist.txt || true
             echo "derived resources/sshtarlist.txt from ssh.tar.gz"
           fi
+          # setup.sh may report MISS items; the build only needs the vendored tools
+          # plus pyimg4/capstone, which are checked by the next step.
           ./setup.sh || echo "::warning::setup.sh reported MISS items; continuing anyway"
 
-      - name: Verify setup (what is actually available)
+      - name: Verify setup
         if: always()
         run: |
           echo "== verify =="
-          echo "python: $(python3 --version 2>&1)"
-          echo "brew:   $(brew --version 2>/dev/null | head -1)"
-          command -v ipsw >/dev/null && echo "ipsw:   $(ipsw version 2>/dev/null | head -1)" || echo "ipsw:   MISSING"
-          python3 -c "import pyimg4; print('pyimg4: OK', getattr(pyimg4,'__version__',''))" 2>&1 || echo "pyimg4: MISSING"
-          python3 -c "import capstone; print('capstone: OK', capstone.__version__)" 2>&1 || echo "capstone: MISSING"
+          echo "bash:   $(/usr/local/bin/bash --version 2>/dev/null | head -1 || echo MISSING)"
+          echo "ipsw:   $(command -v ipsw >/dev/null && ipsw version 2>/dev/null | head -1 || echo MISSING)"
+          echo "python3: $(python3 --version 2>&1)"
 
       - name: Build bootchain
         run: |
           cd builder
-          ./build4.sh --product ${{ matrix.device }} --version ${{ inputs.version }} --kpf-set ios27 --with-fw
+          # Put the brew bash (5.x) first so every script, including the ones build4.sh
+          # shells out to, runs on a bash that understands `declare -A`.
+          export PATH="/usr/local/bin:$PATH"
+          echo "bash in use: $(bash --version | head -1)"
+          bash ./build4.sh --product ${{ matrix.device }} --version ${{ inputs.version }} --kpf-set ios27 --with-fw
 
       - name: Summary (what was produced)
         if: always()
